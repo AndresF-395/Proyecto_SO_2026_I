@@ -301,7 +301,6 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
   pte_t *pte;
   uint64 pa, i;
   uint flags;
-  char *mem;
 
   for (i = 0; i < sz; i += PGSIZE) {
     if ((pte = walk(old, i, 0)) == 0)
@@ -310,13 +309,20 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
       continue; // physical page hasn't been allocated
     pa = PTE2PA(*pte);
     flags = PTE_FLAGS(*pte);
-    if ((mem = kalloc()) == 0)
-      goto err;
-    memmove(mem, (char *)pa, PGSIZE);
-    if (mappages(new, i, PGSIZE, (uint64)mem, flags) != 0) {
-      kfree(mem);
-      goto err;
+
+    if (flags & PTE_W) {
+      // Copy-on-write: en vez de copiar la página, la compartimos.
+      // Se marca sin permiso de escritura y con PTE_COW en AMBAS
+      // tablas de páginas (padre e hijo), para que cualquiera de
+      // los dos dispare un fault al intentar escribir.
+      flags = (flags & ~PTE_W) | PTE_COW;
+      *pte = PA2PTE(pa) | flags;
     }
+
+    if (mappages(new, i, PGSIZE, pa, flags) != 0)
+      goto err;
+
+    krefinc((void *)pa); // ahora dos procesos referencian esta física
   }
   return 0;
 
@@ -456,13 +462,42 @@ vmfault(pagetable_t pagetable, uint64 va, int read)
 {
   uint64 mem;
   struct proc *p = myproc();
+  pte_t *pte;
 
   if (va >= p->sz)
     return 0;
   va = PGROUNDDOWN(va);
-  if (ismapped(pagetable, va)) {
+
+  pte = walk(pagetable, va, 0);
+  if (pte != 0 && (*pte & PTE_V)) {
+    // La página ya está mapeada. El único fault legítimo sobre una
+    // página ya mapeada es un intento de ESCRITURA (read==0) sobre
+    // una página marcada como copy-on-write.
+    if (!read && (*pte & PTE_COW)) {
+      uint64 pa = PTE2PA(*pte);
+      uint flags = PTE_FLAGS(*pte);
+
+      if (krefcount((void *)pa) == 1) {
+        // Nadie más referencia esta página física: no hace falta
+        // copiar, solo recuperamos el permiso de escritura.
+        *pte = (*pte & ~PTE_COW) | PTE_W;
+        return pa;
+      }
+
+      // Está compartida con otro proceso: copiar de verdad.
+      if ((mem = (uint64)kalloc()) == 0)
+        return 0;
+      memmove((void *)mem, (void *)pa, PGSIZE);
+      flags = (flags & ~PTE_COW) | PTE_W;
+      *pte = PA2PTE(mem) | flags;
+      kfree((void *)pa); // soltamos nuestra referencia a la compartida
+      return mem;
+    }
+    // Mapeada pero no-COW: fault ilegítimo, comportamiento original.
     return 0;
   }
+
+  // No mapeada: lazy allocation de sbrk (comportamiento original).
   mem = (uint64)kalloc();
   if (mem == 0)
     return 0;
