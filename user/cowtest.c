@@ -24,10 +24,10 @@
 
 #define PGSIZE 4096
 
-
+// ------------------------------------------------------------------
 // 1. Prueba básica: padre e hijo escriben la misma variable de datos
 //    (misma página COW) y no se deben ver afectados entre sí.
-
+// ------------------------------------------------------------------
 void
 correctness_basic(void)
 {
@@ -42,7 +42,8 @@ correctness_basic(void)
   }
 
   if (pid == 0) {
-    
+    // hijo: escribe su propio valor (esto DEBE disparar el
+    // page fault de COW y copiar la página)
     shared_var = 222;
     if (shared_var != 222) {
       printf("FALLO: hijo no ve su propio valor escrito\n");
@@ -52,7 +53,8 @@ correctness_basic(void)
     exit(0);
   } else {
     wait(0);
-    
+    // padre: su copia NO debe haber cambiado por lo que
+    // escribió el hijo, si COW está bien implementado
     if (shared_var != 111) {
       printf("FALLO: padre ve shared_var = %d (esperado 111) -- "
              "la memoria del padre fue corrompida por el hijo\n",
@@ -64,11 +66,11 @@ correctness_basic(void)
   }
 }
 
-
+// ------------------------------------------------------------------
 // 2. Varios hijos escriben en distintas partes de un arreglo grande
 //    (varias páginas físicas), para probar refcounting con más de
 //    2 referencias simultáneas a la misma página.
-
+// ------------------------------------------------------------------
 #define NCHILD 4
 #define ARR_PAGES 4
 #define ARR_SIZE ((PGSIZE * ARR_PAGES) / sizeof(int))
@@ -93,12 +95,13 @@ correctness_multi(void)
       exit(1);
     }
     if (pid == 0) {
-      
+      // cada hijo escribe un valor distinto en TODO el arreglo
+      // (todas las páginas se van a copiar por cada hijo)
       int myval = 2000 + i;
       for (int j = 0; j < ARR_SIZE; j++)
         big_array[j] = myval;
 
-      
+      // verifica que su propia escritura se mantenga
       for (int j = 0; j < ARR_SIZE; j++) {
         if (big_array[j] != myval) {
           printf("FALLO: hijo %d ve big_array[%d] = %d (esperado %d)\n",
@@ -111,10 +114,24 @@ correctness_multi(void)
     pids[i] = pid;
   }
 
-  for (i = 0; i < NCHILD; i++)
-    wait(0);
+  for (i = 0; i < NCHILD; i++) {
+    int wpid = wait(0);
+    int found = 0;
+    for (int j = 0; j < NCHILD; j++) {
+      if (pids[j] == wpid) {
+        found = 1;
+        break;
+      }
+    }
+    if (!found) {
+      printf("FALLO: wait() devolvio pid %d, que no esta en la lista "
+             "de hijos lanzados\n", wpid);
+      exit(1);
+    }
+  }
 
-  
+  // el padre nunca escribió después del fork, así que su copia
+  // debe seguir intacta con el valor original 1000
   for (i = 0; i < ARR_SIZE; i++) {
     if (big_array[i] != 1000) {
       printf("FALLO: padre ve big_array[%d] = %d (esperado 1000) -- "
@@ -128,12 +145,12 @@ correctness_multi(void)
          NCHILD, ARR_PAGES);
 }
 
-
+// ------------------------------------------------------------------
 // 3. Leer (sin escribir) una página COW no debe requerir copia.
 //    No podemos medir directamente "no hubo copia" desde espacio de
 //    usuario, pero sí podemos confirmar que la lectura funciona
 //    correctamente sobre la página compartida sin haber escrito antes.
-
+// ------------------------------------------------------------------
 int readonly_data[PGSIZE / sizeof(int)];
 
 void
@@ -151,7 +168,7 @@ correctness_reread(void)
   }
 
   if (pid == 0) {
-    
+    // el hijo SOLO lee, nunca escribe -> nunca debe copiarse esta página
     int sum = 0;
     for (int i = 0; i < PGSIZE / sizeof(int); i++)
       sum += readonly_data[i];
@@ -168,11 +185,11 @@ correctness_reread(void)
   }
 }
 
-
+// ------------------------------------------------------------------
 // 4. Medición de tiempo: fork() repetido de un proceso con memoria
 //    grande. Compara esto antes/después de implementar COW -- debería
 //    bajar notablemente porque ya no se copia físicamente cada página.
-
+// ------------------------------------------------------------------
 #define TIMING_PAGES 16
 #define TIMING_SIZE ((PGSIZE * TIMING_PAGES) / sizeof(int))
 int timing_array[TIMING_SIZE];
@@ -195,7 +212,7 @@ timing_fork(void)
       exit(1);
     }
     if (pid == 0) {
-      
+      // el hijo no hace nada, solo mide el costo de fork() en si
       exit(0);
     } else {
       wait(0);
