@@ -190,7 +190,7 @@ correctness_reread(void)
 //    grande. Compara esto antes/después de implementar COW -- debería
 //    bajar notablemente porque ya no se copia físicamente cada página.
 // ------------------------------------------------------------------
-#define TIMING_PAGES 16
+#define TIMING_PAGES 256
 #define TIMING_SIZE ((PGSIZE * TIMING_PAGES) / sizeof(int))
 int timing_array[TIMING_SIZE];
  
@@ -202,7 +202,7 @@ timing_fork(void)
   for (int i = 0; i < TIMING_SIZE; i++)
     timing_array[i] = i;
  
-  int NFORKS = 20;
+  int NFORKS = 400;
   int start = uptime();
  
   for (int i = 0; i < NFORKS; i++) {
