@@ -65,6 +65,7 @@ class XV6DynamicBenchmarker:
                 if is_test_output:
                     output_file.write(line)
                     output_file.flush()
+                    print(f"  [CAPTURADO] {line.strip()}")
 
                 # DETENCIÓN DINÁMICA: Si detecta el mensaje de finalización, cierra con éxito
                 if "      sube NFORKS en el codigo" in line:
