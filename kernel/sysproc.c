@@ -107,3 +107,12 @@ sys_uptime(void)
   release(&tickslock);
   return xticks;
 }
+
+// Added wrapper for setpriority system call
+uint64
+sys_setpriority(void)
+{
+  int priority;
+  argint(0, &priority);
+  return ksetpriority(priority);
+}

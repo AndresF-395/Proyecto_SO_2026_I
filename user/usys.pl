@@ -43,3 +43,4 @@ entry("sbrk");
 entry("pause");
 entry("uptime");
 entry("sync");
+entry("setpriority"); # agregar el stub en ensamblador para la llamada al sistema setpriority
