@@ -1,102 +1,78 @@
-"""Módulo automatizado y dinámico para el análisis de rendimiento en xv6.
+"""Módulo para la captura segura y filtrada de métricas en xv6.
 
-Este módulo ejecuta QEMU, detecta dinámicamente la finalización de 'cowtest'
-sin usar tiempos de espera fijos, y filtra el archivo de salida para conservar
-únicamente los resultados impresos por el programa de pruebas.
+Este módulo automatiza la ejecución de QEMU usando un tiempo de espera fijo,
+recuperando de forma robusta todo el texto de la consola al finalizar.
 """
 
 import subprocess
 import time
 
 
-class XV6DynamicBenchmarker:
-    """Administra la simulación interactiva de xv6 con filtrado de datos en tiempo real."""
+class XV6SafeBenchmarker:
+    """Administra la simulación de xv6 garantizando la captura completa del output."""
 
     def __init__(self, output_filename: str = "metrics_log.txt") -> None:
-        """Inicializa el evaluador dinámico configurando el archivo de salida.
+        """Inicializa el evaluador con el archivo de salida objetivo.
 
         Args:
-            output_filename (str): Nombre del archivo donde se guardarán las métricas filtradas.
+            output_filename (str): Nombre del archivo para guardar las métricas.
         """
         self._output_filename: str = output_filename
 
-    def run_benchmark(self) -> None:
-        """Lanza xv6, ejecuta cowtest y procesa el flujo de salida dinámicamente."""
-        print(f"[INFO] Iniciando entorno dinámico. Destino: {self._output_filename}")
+    def run_benchmark(self, timeout_seconds: int = 110) -> None:
+        """Lanza xv6, inyecta cowtest y recupera el output tras el tiempo asignado.
 
-        # Apertura del descriptor de archivo para almacenar las métricas filtradas
-        with open(self._output_filename, "w", encoding="utf-8") as output_file:
-            process = subprocess.Popen(
-                ["make", "qemu"],
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True
-            )
+        Args:
+            timeout_seconds (int): Tiempo de espera (110s para Original, ~30s para COW).
+        """
+        print(f"[INFO] Iniciando simulación segura. Destino: {self._output_filename}")
+        print(f"[INFO] Esperando {timeout_seconds} segundos a que finalicen las pruebas...")
 
-            # Bandera lógica para saber cuándo empezar a escribir en el archivo .txt
-            is_test_output: bool = False
+        # Lanza QEMU
+        process = subprocess.Popen(
+            ["make", "qemu"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True
+        )
 
-            # Bandera para controlar si ya se envió el comando de ejecución
-            command_sent: bool = False
+        try:
+            # 1. Espera 6 segundos para garantizar que esté listo
+            time.sleep(6)
 
-            # Lee la salida de la consola línea por línea en tiempo real
-            while True:
-                # El método readline se bloquea automáticamente esperando salida de QEMU
-                line = process.stdout.readline()
-                if not line:
-                    break
+            # 2. Introduce el comando de forma directa
+            if process.stdin:
+                process.stdin.write("cowtest\n")
+                process.stdin.flush()
 
-                # Detecta si xv6 llegó al shell listo para recibir comandos
-                if "$" in line and not command_sent:
-                    # Espera un instante corto de estabilización e introduce el comando
-                    time.sleep(1)
-                    if process.stdin:
-                        process.stdin.write("cowtest\n")
-                        process.stdin.flush()
-                        command_sent = True
-                    continue
+            # 3. .communicate() mantiene el proceso vivo el tiempo asignado y recupera TODO el texto
+            stdout_data, _ = process.communicate(timeout=timeout_seconds)
 
-                # FILTRADO: Se activa con la primera impresión del main en C sin importar espacios
-                if "=== cowtest" in line:
-                    is_test_output = True
-
-                # Si la línea pertenece a cowtest, se preserva de manera íntegra
-                if is_test_output:
-                    output_file.write(line)
-                    output_file.flush()
-                    print(f"  [CAPTURADO] {line.strip()}")
-
-                # DETENCIÓN DINÁMICA: Busca una subcadena única y segura sin espacios al inicio
-                if "todas las pruebas de correctitud pasaron" in line:
-                    # Captura las últimas tres líneas de notas informativas antes de salir
-                    try:
-                        note_line_1 = process.stdout.readline()
-                        note_line_2 = process.stdout.readline()
-                        note_line_3 = process.stdout.readline()
-                        output_file.write(note_line_1)
-                        output_file.write(note_line_2)
-                        output_file.write(note_line_3)
-                        print(f"  [CAPTURADO] {note_line_1.strip()}")
-                        print(f"  [CAPTURADO] {note_line_2.strip()}")
-                        print(f"  [CAPTURADO] {note_line_3.strip()}")
-                    except Exception:
-                        pass  # Previene cierres abruptos
-
-                    print("[INFO] Indicador de finalización detectado con éxito.")
-                    break
-
-                # DETENCIÓN POR FALLA: Si un test falla, captura el error y finaliza
-                if "FALLO:" in line or "panic:" in line:
-                    output_file.write(line)
-                    print(f"  [ALERTA] Se detectó una falla en la ejecución: {line.strip()}")
-                    break
-
-            # Fuerza la finalización de QEMU una vez cumplida la condición de parada
+        except subprocess.TimeoutExpired:
+            # Si se cumple el tiempo, fuerza el cierre limpio de QEMU y rescata lo que alcanzó a generar
             process.terminate()
-            print(f"[SUCCESS] Proceso concluido. Archivo generado: {self._output_filename}\n")
+            stdout_data, _ = process.communicate()
+
+        # 4. FILTRADO: Procesa el bloque completo de texto recuperado
+        filtered_lines = []
+        is_test_output = False
+
+        for line in stdout_data.splitlines():
+            if "=== cowtest" in line:
+                is_test_output = True
+
+            if is_test_output:
+                filtered_lines.append(line)
+
+        # 5. Guarda exclusivamente los printf del test en el archivo .txt
+        with open(self._output_filename, "w", encoding="utf-8") as output_file:
+            for line in filtered_lines:
+                output_file.write(line + "\n")
+
+        print(f"[SUCCESS] Métricas guardadas correctamente en: {self._output_filename}\n")
 
 
 if __name__ == "__main__":
-    benchmarker = XV6DynamicBenchmarker(output_filename="metrics_original.txt")
-    benchmarker.run_benchmark()
+    benchmarker = XV6SafeBenchmarker(output_filename="metrics_original.txt")
+    benchmarker.run_benchmark(timeout_seconds=110)
