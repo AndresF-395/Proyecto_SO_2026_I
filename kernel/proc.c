@@ -280,6 +280,8 @@ kfork(void)
   // copy saved user registers.
   *(np->trapframe) = *(p->trapframe);
 
+  np->priority = p->priority;
+
   // Cause fork to return 0 in the child.
   np->trapframe->a0 = 0;
 
@@ -459,6 +461,9 @@ scheduler(void)
       acquire(&best_p->lock);
       // Debemos verificar de nuevo si sigue RUNNABLE antes de ejecutarlo
       if (best_p->state == RUNNABLE) {
+        // AÑADIDO: instrumentación para Prueba B
+        printk("[SCHED] pid=%d priority=%d\n", best_p->pid, best_p->priority);
+
         best_p->state = RUNNING;
         c->proc = best_p;
         swtch(&c->context, &best_p->context);
@@ -626,6 +631,21 @@ kkill(int pid)
   return -1;
 }
 
+int
+ksetpriority(int priority)
+{
+    struct proc *p = myproc();
+
+    if(priority < 0 || priority > 20)
+        return -1;
+
+    acquire(&p->lock);
+    p->priority = priority;
+    release(&p->lock);
+
+    return 0;
+}
+
 void
 setkilled(struct proc *p)
 {
@@ -706,3 +726,4 @@ procdump(void)
     printk("\n");
   }
 }
+
