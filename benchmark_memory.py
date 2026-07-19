@@ -75,4 +75,4 @@ class XV6SafeBenchmarker:
 
 if __name__ == "__main__":
     benchmarker = XV6SafeBenchmarker(output_filename="metrics_cow.txt")
-    benchmarker.run_benchmark(timeout_seconds=110)
+    benchmarker.run_benchmark(timeout_seconds=110)  # Tiempo de espera para almacenar todas las métricas desde QEMU
